@@ -6,6 +6,7 @@ import logging
 import asyncio
 import tempfile
 import subprocess
+import itertools
 import requests
 import discord
 from discord import app_commands
@@ -18,7 +19,6 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-PIXVERSE_API_KEY = os.getenv("PIXVERSE_API_KEY")
 WATERMARK_URL = (
     "https://raw.githubusercontent.com/redSBA/Ai/refs/heads/main/"
     "%D0%91%D0%B5%D0%B7%20%D0%BD%D0%B0%D0%B7%D0%B2%D0%B0%D0%BD%D0%B8%D1%8F1_20260901175659.png"
@@ -31,10 +31,22 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
+PIXVERSE_KEYS = [k for k in [
+    os.getenv("PIXVERSE_API_KEY_1"),
+    os.getenv("PIXVERSE_API_KEY_2"),
+] if k]
+if not PIXVERSE_KEYS:
+    raise ValueError("Нет ключей PixVerse! Добавь PIXVERSE_API_KEY_1 и/или PIXVERSE_API_KEY_2")
+
+_key_cycle = itertools.cycle(PIXVERSE_KEYS)
 WATERMARK_PATH = "/tmp/watermark.png"
 
 
-def download_watermark():
+def _get_key() -> str:
+    return next(_key_cycle)
+
+
+def _download_watermark():
     if not os.path.exists(WATERMARK_PATH):
         r = requests.get(WATERMARK_URL, timeout=30)
         r.raise_for_status()
@@ -43,27 +55,23 @@ def download_watermark():
         print("[+] Watermark downloaded")
 
 
-download_watermark()
-
-import imageio_ffmpeg
-
-
-def add_watermark(video_path: str, output_path: str):
+def _add_watermark(video_path: str, out_path: str):
+    import imageio_ffmpeg
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     cmd = [
         ffmpeg, "-y", "-i", video_path,
         "-i", WATERMARK_PATH,
         "-filter_complex", "overlay=W-w-10:H-h-10",
         "-c:a", "copy",
-        output_path
+        out_path,
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def pixverse_generate(prompt: str, negative_prompt: str = "blurry, low quality, text, watermark") -> str:
+def _pixverse_generate(prompt: str, negative: str = "blurry, low quality, text, watermark") -> str:
     base = "https://app-api.pixverse.ai"
     headers = {
-        "API-KEY": PIXVERSE_API_KEY,
+        "API-KEY": _get_key(),
         "Ai-trace-id": str(uuid.uuid4()),
         "Content-Type": "application/json",
     }
@@ -73,20 +81,19 @@ def pixverse_generate(prompt: str, negative_prompt: str = "blurry, low quality, 
         "model": "v6",
         "quality": "720p",
         "prompt": prompt,
-        "negative_prompt": negative_prompt,
+        "negative_prompt": negative,
         "seed": 0,
         "water_mark": False,
     }
     r = requests.post(f"{base}/openapi/v2/video/text/generate", headers=headers, json=payload, timeout=30)
     r.raise_for_status()
-    data = r.json()
-    return data["Resp"]["video_id"]
+    return r.json()["Resp"]["video_id"]
 
 
-def pixverse_status(video_id: str) -> dict:
+def _pixverse_status(video_id: str) -> dict:
     base = "https://app-api.pixverse.ai"
     headers = {
-        "API-KEY": PIXVERSE_API_KEY,
+        "API-KEY": _get_key(),
         "Ai-trace-id": str(uuid.uuid4()),
     }
     r = requests.get(f"{base}/openapi/v2/video/result/{video_id}", headers=headers, timeout=30)
@@ -94,31 +101,30 @@ def pixverse_status(video_id: str) -> dict:
     return r.json()["Resp"]
 
 
-def poll_video(video_id: str, timeout: int = 300) -> str:
+def _poll_video(video_id: str, timeout: int = 300) -> str:
     start = time.time()
     while time.time() - start < timeout:
-        resp = pixverse_status(video_id)
-        status = resp["status"]
-        if status == 1:
+        resp = _pixverse_status(video_id)
+        st = resp["status"]
+        if st == 1:
             return resp["url"]
-        if status in (7, 8):
-            raise RuntimeError(f"PixVerse generation failed (status={status})")
+        if st in (7, 8):
+            raise RuntimeError(f"PixVerse failed (status={st})")
         time.sleep(5)
-    raise TimeoutError("PixVerse generation timeout")
+    raise TimeoutError("PixVerse timeout")
 
 
 @tree.command(name="pixverse", description="Сгенерировать видео через PixVerse V6")
 @app_commands.describe(prompt="Описание видео")
-async def pixverse_command(interaction: discord.Interaction, prompt: str):
+async def pixverse_cmd(interaction: discord.Interaction, prompt: str):
     try:
         await interaction.response.defer(ephemeral=True)
     except NotFound:
         return
     except Exception as e:
-        print(f"[!] defer error: {e}")
+        print(f"[!] defer: {e}")
         return
 
-    # 1. Webhook "подождите"
     wait_payload = {
         "content": (
             f"⏳ **{interaction.user.display_name}** генерирует видео:\n"
@@ -126,52 +132,44 @@ async def pixverse_command(interaction: discord.Interaction, prompt: str):
             f"*Ожидание PixVerse V6...*"
         )
     }
+
     wait_msg_id = None
     try:
         r = requests.post(WEBHOOK_URL, json=wait_payload, timeout=10)
         r.raise_for_status()
         wait_msg_id = r.json().get("id")
     except Exception as e:
-        await interaction.followup.send(f"❌ Ошибка webhook: `{e}`", ephemeral=True)
+        await interaction.followup.send(f"❌ Webhook: `{e}`", ephemeral=True)
         return
 
-    # 2. Генерация в отдельном потоке
     video_url = None
     try:
-        video_id = await asyncio.to_thread(pixverse_generate, prompt)
-        video_url = await asyncio.to_thread(poll_video, video_id)
+        vid = await asyncio.to_thread(_pixverse_generate, prompt)
+        video_url = await asyncio.to_thread(_poll_video, vid)
     except Exception as e:
-        patch_url = WEBHOOK_URL.replace("?wait=true", "")
+        patch = WEBHOOK_URL.replace("?wait=true", "")
         if wait_msg_id:
-            requests.patch(
-                f"{patch_url}/messages/{wait_msg_id}",
-                json={"content": f"❌ Ошибка генерации: `{e}`"},
-            )
-        await interaction.followup.send("❌ Не удалось сгенерировать видео.", ephemeral=True)
+            requests.patch(f"{patch}/messages/{wait_msg_id}", json={"content": f"❌ Ошибка: `{e}`"})
+        await interaction.followup.send("❌ Не удалось сгенерировать.", ephemeral=True)
         return
 
-    # 3. Скачать, наложить watermark, отправить
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            raw_path = os.path.join(tmpdir, "raw.mp4")
-            out_path = os.path.join(tmpdir, "out.mp4")
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = os.path.join(tmp, "raw.mp4")
+            out = os.path.join(tmp, "out.mp4")
 
-            # Скачать видео
             r = requests.get(video_url, timeout=60)
             r.raise_for_status()
-            with open(raw_path, "wb") as f:
+            with open(raw, "wb") as f:
                 f.write(r.content)
 
-            # Watermark
-            await asyncio.to_thread(add_watermark, raw_path, out_path)
+            await asyncio.to_thread(_add_watermark, raw, out)
 
-            # Удаляем "подождите"
-            patch_url = WEBHOOK_URL.replace("?wait=true", "")
+            patch = WEBHOOK_URL.replace("?wait=true", "")
             if wait_msg_id:
-                requests.delete(f"{patch_url}/messages/{wait_msg_id}")
+                requests.delete(f"{patch}/messages/{wait_msg_id}")
 
-            # Отправляем новое сообщение с файлом через webhook
-            with open(out_path, "rb") as f:
+            with open(out, "rb") as f:
                 files = {"file": ("video.mp4", f, "video/mp4")}
                 payload = {
                     "payload_json": json.dumps({
@@ -182,13 +180,14 @@ async def pixverse_command(interaction: discord.Interaction, prompt: str):
 
         await interaction.followup.send("✅ Видео отправлено!", ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"❌ Ошибка обработки видео: `{e}`", ephemeral=True)
+        await interaction.followup.send(f"❌ Обработка видео: `{e}`", ephemeral=True)
 
 
 @client.event
 async def on_ready():
     await tree.sync()
     print(f"✅ Бот {client.user} запущен! Команда: /pixverse")
+    _download_watermark()
 
 
 if __name__ == "__main__":
