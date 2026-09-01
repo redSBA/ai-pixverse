@@ -70,8 +70,9 @@ def _add_watermark(video_path: str, out_path: str):
 
 def _pixverse_generate(prompt: str, negative: str = "blurry, low quality, text, watermark") -> str:
     base = "https://app-api.pixverse.ai"
+    key = _get_key()
     headers = {
-        "API-KEY": _get_key(),
+        "API-KEY": key,
         "Ai-trace-id": str(uuid.uuid4()),
         "Content-Type": "application/json",
     }
@@ -85,31 +86,65 @@ def _pixverse_generate(prompt: str, negative: str = "blurry, low quality, text, 
         "seed": 0,
         "water_mark": False,
     }
+
     r = requests.post(f"{base}/openapi/v2/video/text/generate", headers=headers, json=payload, timeout=30)
-    r.raise_for_status()
-    return r.json()["Resp"]["video_id"]
+
+    # 🔥 Логируем полный ответ при ошибке
+    try:
+        r.raise_for_status()
+    except requests.HTTPError as e:
+        print(f"[!] PixVerse HTTP {r.status_code}: {r.text[:500]}")
+        raise RuntimeError(f"PixVerse HTTP {r.status_code}: {r.text[:200]}")
+
+    data = r.json()
+
+    # 🔥 Проверяем структуру ответа
+    if "Resp" not in data:
+        print(f"[!] PixVerse response (no Resp): {json.dumps(data)[:500]}")
+        raise RuntimeError(f"Неверный ответ PixVerse: {json.dumps(data)[:200]}")
+
+    resp = data["Resp"]
+    if "video_id" not in resp:
+        print(f"[!] PixVerse Resp (no video_id): {json.dumps(resp)[:500]}")
+        raise RuntimeError(f"Нет video_id в ответе: {json.dumps(resp)[:200]}")
+
+    return resp["video_id"]
 
 
 def _pixverse_status(video_id: str) -> dict:
     base = "https://app-api.pixverse.ai"
+    key = _get_key()
     headers = {
-        "API-KEY": _get_key(),
+        "API-KEY": key,
         "Ai-trace-id": str(uuid.uuid4()),
     }
+
     r = requests.get(f"{base}/openapi/v2/video/result/{video_id}", headers=headers, timeout=30)
-    r.raise_for_status()
-    return r.json()["Resp"]
+
+    try:
+        r.raise_for_status()
+    except requests.HTTPError as e:
+        print(f"[!] Status HTTP {r.status_code}: {r.text[:500]}")
+        raise RuntimeError(f"Status HTTP {r.status_code}")
+
+    data = r.json()
+
+    if "Resp" not in data:
+        print(f"[!] Status response (no Resp): {json.dumps(data)[:500]}")
+        raise RuntimeError(f"Неверный ответ статуса: {json.dumps(data)[:200]}")
+
+    return data["Resp"]
 
 
 def _poll_video(video_id: str, timeout: int = 300) -> str:
     start = time.time()
     while time.time() - start < timeout:
         resp = _pixverse_status(video_id)
-        st = resp["status"]
+        st = resp.get("status", -1)
         if st == 1:
             return resp["url"]
         if st in (7, 8):
-            raise RuntimeError(f"PixVerse failed (status={st})")
+            raise RuntimeError(f"PixVerse failed (status={st}, msg={resp.get('msg', 'unknown')})")
         time.sleep(5)
     raise TimeoutError("PixVerse timeout")
 
@@ -197,3 +232,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[!] Перезапуск через 5 сек... ({e})")
             time.sleep(5)
+    
