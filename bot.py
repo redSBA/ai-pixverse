@@ -14,7 +14,7 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = "AQ.Ab8RN6KZ1WESbbGrGkvNvHdjs1LY1VJnDAxMtOlulU4ajzNVMQ"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 if "?" not in WEBHOOK_URL:
