@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 import discord
 from discord import app_commands
 from flask import Flask, request, jsonify
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
@@ -48,9 +49,8 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     return "429" in msg or "quota" in msg.lower() or "rate limit" in msg.lower() or "resource_exhausted" in msg.lower()
 
 
-def _build_model(api_key: str):
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=SYSTEM_PROMPT)
+def _build_client(api_key: str):
+    return genai.Client(api_key=api_key)
 
 
 def ask_gemini(user_text: str, image_bytes: bytes | None = None, image_mime: str | None = None) -> str:
@@ -66,16 +66,25 @@ def ask_gemini(user_text: str, image_bytes: bytes | None = None, image_mime: str
         start = next(_key_cycle)
     order = [(start + i) % len(API_KEYS) for i in range(len(API_KEYS))]
 
-    content_parts = [user_text]
+    # Формируем contents: текст + опционально изображение
+    contents = [user_text]
     if image_bytes is not None:
-        content_parts.append({"mime_type": image_mime or "image/png", "data": image_bytes})
+        contents.append(
+            types.Part.from_bytes(data=image_bytes, mime_type=image_mime or "image/png")
+        )
 
     last_error = None
     for idx in order:
         key = API_KEYS[idx]
         try:
-            model = _build_model(key)
-            response = model.generate_content(content_parts)
+            client = _build_client(key)
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                ),
+            )
             return response.text.strip() if response.text else "(пустой ответ)"
         except Exception as e:
             last_error = e
