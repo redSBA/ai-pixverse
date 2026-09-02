@@ -180,14 +180,15 @@ async def on_ready():
 @client.tree.command(name="gemini25", description="Спросить Gemini 2.5")
 @app_commands.describe(промт="Текст запроса", фото="Изображение (необязательно)")
 async def gemini25(interaction: discord.Interaction, промт: str, фото: discord.Attachment | None = None):
+    # СРАЗУ defer — иначе Discord выдаст "Unknown interaction" через 3 секунды
+    await interaction.response.defer()
+
     wait = check_and_set_cooldown(interaction.user.id)
     if wait > 0:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Подожди ещё {int(wait) + 1} сек. перед следующей командой.", ephemeral=True
         )
         return
-
-    await interaction.response.defer(thinking=True)
 
     image_bytes = None
     image_mime = None
