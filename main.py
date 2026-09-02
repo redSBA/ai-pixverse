@@ -181,7 +181,12 @@ async def on_ready():
 @app_commands.describe(промт="Текст запроса", фото="Изображение (необязательно)")
 async def gemini25(interaction: discord.Interaction, промт: str, фото: discord.Attachment | None = None):
     # СРАЗУ defer — иначе Discord выдаст "Unknown interaction" через 3 секунды
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except discord.NotFound:
+        # Interaction уже истек (холодный старт Railway >3 сек) — тихо выходим
+        log.warning("Interaction expired before defer (cold start?), ignoring")
+        return
 
     wait = check_and_set_cooldown(interaction.user.id)
     if wait > 0:
