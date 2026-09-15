@@ -46,9 +46,9 @@ async def geminiask(interaction: discord.Interaction, question: str):
     
     try:
         # ✅ Новый API 2.23.0 (Trial tier compatible)
-        # Trial tier: используем gemini-2.5-flash
+        # gemini-3.5-flash-lite - самая экономная модель
         response = client_genai.models.generate_content(
-            model="gemini-2.5-flash",  # Trial tier поддерживает эту модель
+            model="gemini-3.5-flash-lite",  # Самая дешёвая Flash модель
             contents=question,
             config=genai.types.GenerateContentConfig(
                 temperature=0.7,
