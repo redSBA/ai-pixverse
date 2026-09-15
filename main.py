@@ -3,14 +3,13 @@ import discord
 from discord.ext import commands
 from google import genai
 
-# Новый SDK автоматически читает GEMINI_API_KEY из env
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not DISCORD_TOKEN:
     raise ValueError("DISCORD_TOKEN не установлен!")
 
-# ✅ Новый Google GenAI SDK (2026)
-client = genai.Client()  # API key из GEMINI_API_KEY env var
+# ✅ Google GenAI SDK 2.23.0 (актуально на сентябрь 2026)
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -18,7 +17,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f"✅ Бот {bot.user} готов!")
+    print(f"✅ Бот {bot.user} подключен!")
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.listening,
         name="!ask для вопросов"
@@ -26,14 +25,14 @@ async def on_ready():
 
 @bot.command(name="ask")
 async def ask_gemini(ctx, *, question: str):
-    """Спроси Gemini через новый SDK"""
+    """Спроси Gemini 3.5 Flash"""
     if not question.strip():
         await ctx.send("❌ Введи вопрос!")
         return
     
     async with ctx.typing():
         try:
-            # ✅ Новый API через генераторClient
+            # ✅ Новый API 2.23.0
             response = client.models.generate_content(
                 model="gemini-3.5-flash",
                 contents=question,
