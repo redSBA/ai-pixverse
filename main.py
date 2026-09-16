@@ -144,10 +144,10 @@ async def lamaask(interaction: discord.Interaction, question: str):
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
 # ✅ Slash команда /mixtralask
-@bot.tree.command(name="mixtralask", description="Спроси Mixtral 8x22B (SMoE)")
+@bot.tree.command(name="mixtralask", description="Спроси GPT-OSS 120B (Мощный)")
 @app_commands.describe(question="Твой вопрос")
 async def mixtralask(interaction: discord.Interaction, question: str):
-    """Спроси Mixtral 8x22B через Groq"""
+    """Спроси GPT-OSS 120B через Groq (мощная модель)"""
     
     if not question.strip():
         await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
@@ -156,16 +156,16 @@ async def mixtralask(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
     try:
-        # ✅ Mixtral через Groq (MoE архитектура, мощный)
+        # ✅ GPT-OSS 120B через Groq (очень мощная)
         groq_client = get_groq_client()
         if not groq_client:
             await interaction.followup.send(
-                "❌ Mixtral недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
+                "❌ GPT-OSS 120B недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
                 "Добавь его в Railway → Variables"
             )
             return
         
-        # Mixtral 8x22B MoE модель (новая версия, 8x7b закрыта)
+        # GPT-OSS 120B - мощная модель для сложных задач
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {
@@ -173,7 +173,7 @@ async def mixtralask(interaction: discord.Interaction, question: str):
                     "content": question,
                 }
             ],
-            model="mixtral-8x22b-32768",  # Новая версия Mixtral (8x7b закрыта)
+            model="openai/gpt-oss-120b",  # Мощная модель (Mixtral закрыта)
             max_tokens=2048,
             temperature=0.7,
         )
@@ -181,9 +181,9 @@ async def mixtralask(interaction: discord.Interaction, question: str):
         answer = chat_completion.choices[0].message.content[:4000]
         
         if len(answer) > 3900:
-            await interaction.followup.send(f"🎯 **Mixtral 8x22B:**\n{answer[:3900]}\n...")
+            await interaction.followup.send(f"💪 **GPT-OSS 120B:**\n{answer[:3900]}\n...")
         else:
-            await interaction.followup.send(f"🎯 **Mixtral 8x22B:**\n{answer}")
+            await interaction.followup.send(f"💪 **GPT-OSS 120B:**\n{answer}")
             
     except Exception as e:
         error_msg = str(e)[:200]
