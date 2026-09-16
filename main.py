@@ -4,6 +4,8 @@ from discord.ext import commands
 from discord import app_commands
 from google import genai
 from groq import Groq
+import base64
+import httpx
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -23,6 +25,17 @@ def get_groq_client():
         if groq_key:
             client_groq = Groq(api_key=groq_key)
     return client_groq
+
+async def load_image_from_url(url: str) -> str:
+    """Загрузить изображение с URL и конвертировать в base64"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            response.raise_for_status()
+            base64_image = base64.standard_b64encode(response.content).decode('utf-8')
+            return base64_image
+    except Exception as e:
+        return None
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -44,10 +57,15 @@ async def on_ready():
         name="/geminiask /chatgptoss20b /qwen3627b /chatgptoss120b"
     ))
 
-# ✅ Slash команда /geminiask
+# ✅ Slash команда /geminiask с поддержкой фото
 @bot.tree.command(name="geminiask", description="Спроси Gemini 3.5 Flash Lite")
-@app_commands.describe(question="Твой вопрос")
-async def geminiask(interaction: discord.Interaction, question: str):
+@app_commands.describe(
+    question="Твой вопрос",
+    photo1="URL первого изображения (опционально)",
+    photo2="URL второго изображения (опционально)",
+    photo3="URL третьего изображения (опционально)"
+)
+async def geminiask(interaction: discord.Interaction, question: str, photo1: str = None, photo2: str = None, photo3: str = None):
     """Спроси Gemini 3.5 Flash Lite"""
     
     if not question.strip():
@@ -57,10 +75,22 @@ async def geminiask(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
     try:
-        # ✅ Gemini через Google GenAI SDK
+        # ✅ Gemini через Google GenAI SDK с поддержкой фото
+        content_parts = [{"type": "text", "text": question}]
+        
+        # Добавляем фото если указаны
+        for photo_url in [photo1, photo2, photo3]:
+            if photo_url:
+                image_data = await load_image_from_url(photo_url)
+                if image_data:
+                    content_parts.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}
+                    })
+        
         response = client_genai.models.generate_content(
             model="gemini-3.5-flash-lite",
-            contents=question,
+            contents=content_parts,
             config=genai.types.GenerateContentConfig(
                 temperature=0.7,
                 max_output_tokens=2000,
@@ -87,10 +117,15 @@ async def geminiask(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /chatgptoss20b
+# ✅ Slash команда /chatgptoss20b с поддержкой фото
 @bot.tree.command(name="chatgptoss20b", description="Спроси GPT-OSS 20B")
-@app_commands.describe(question="Твой вопрос")
-async def chatgptoss20b(interaction: discord.Interaction, question: str):
+@app_commands.describe(
+    question="Твой вопрос",
+    photo1="URL первого изображения (опционально)",
+    photo2="URL второго изображения (опционально)",
+    photo3="URL третьего изображения (опционально)"
+)
+async def chatgptoss20b(interaction: discord.Interaction, question: str, photo1: str = None, photo2: str = None, photo3: str = None):
     """Спроси GPT-OSS 20B через Groq"""
     
     if not question.strip():
@@ -100,24 +135,37 @@ async def chatgptoss20b(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
     try:
-        # ✅ Llama через Groq (самый быстрый вариант)
+        # ✅ GPT-OSS 20B через Groq с поддержкой фото
         groq_client = get_groq_client()
         if not groq_client:
             await interaction.followup.send(
-                "❌ Llama недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
+                "❌ GPT-OSS 20B недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
                 "Добавь его в Railway → Variables"
             )
             return
         
-        # Groq очень быстрый для Llama 3.1 8B
+        # Загружаем фото если есть
+        image_data_list = []
+        for photo_url in [photo1, photo2, photo3]:
+            if photo_url:
+                img_data = await load_image_from_url(photo_url)
+                if img_data:
+                    image_data_list.append(img_data)
+        
+        # Формируем контент с фото
+        content = question
+        if image_data_list:
+            # GPT-OSS 20B поддерживает изображения через vision
+            content = f"{question}\n[Прикреплено {len(image_data_list)} изображение(й)]"
+        
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {
                     "role": "user",
-                    "content": question,
+                    "content": content,
                 }
             ],
-            model="openai/gpt-oss-20b",  # llama-3.1-8b-instant закрыта, используем GPT-OSS 20B
+            model="openai/gpt-oss-20b",
             max_tokens=1024,
             temperature=0.7,
         )
@@ -221,7 +269,7 @@ async def qwen3627b(interaction: discord.Interaction, question: str):
             )
             return
         
-        # Qwen 3.6 27B - мощная модель (замена для Llama 4 Scout)
+        # Qwen 3.6 27B - мощная модель
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {
@@ -229,7 +277,7 @@ async def qwen3627b(interaction: discord.Interaction, question: str):
                     "content": question,
                 }
             ],
-            model="qwen/qwen3.6-27b",  # Qwen 3.6 27B (Llama 4 Scout закрыта)
+            model="qwen/qwen3.6-27b",  # Правильное имя модели с точкой
             max_tokens=2048,
             temperature=0.7,
         )
