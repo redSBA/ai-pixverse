@@ -13,8 +13,16 @@ if not DISCORD_TOKEN:
 # ✅ Google GenAI SDK 2.23.0
 client_genai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# ✅ Groq SDK для Llama
-client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# ✅ Groq SDK для Llama (ленивая инициализация)
+client_groq = None
+
+def get_groq_client():
+    global client_groq
+    if client_groq is None:
+        groq_key = os.getenv("GROQ_API_KEY")
+        if groq_key:
+            client_groq = Groq(api_key=groq_key)
+    return client_groq
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -80,10 +88,10 @@ async def geminiask(interaction: discord.Interaction, question: str):
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
 # ✅ Slash команда /lamaask
-@bot.tree.command(name="lamaask", description="Спроси Llama 3.1 8B")
+@bot.tree.command(name="lamaask", description="Спроси GPT-OSS 20B (Llama улучшенная)")
 @app_commands.describe(question="Твой вопрос")
 async def lamaask(interaction: discord.Interaction, question: str):
-    """Спроси Llama 3.1 8B через Groq"""
+    """Спроси GPT-OSS 20B через Groq"""
     
     if not question.strip():
         await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
@@ -93,8 +101,8 @@ async def lamaask(interaction: discord.Interaction, question: str):
     
     try:
         # ✅ Llama через Groq (самый быстрый вариант)
-        groq_api_key = os.getenv("GROQ_API_KEY")
-        if not groq_api_key:
+        groq_client = get_groq_client()
+        if not groq_client:
             await interaction.followup.send(
                 "❌ Llama недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
                 "Добавь его в Railway → Variables"
@@ -102,14 +110,14 @@ async def lamaask(interaction: discord.Interaction, question: str):
             return
         
         # Groq очень быстрый для Llama 3.1 8B
-        chat_completion = client_groq.chat.completions.create(
+        chat_completion = groq_client.chat.completions.create(
             messages=[
                 {
                     "role": "user",
                     "content": question,
                 }
             ],
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",  # llama-3.1-8b-instant закрыта, используем GPT-OSS 20B
             max_tokens=1024,
             temperature=0.7,
         )
@@ -117,9 +125,9 @@ async def lamaask(interaction: discord.Interaction, question: str):
         answer = chat_completion.choices[0].message.content[:4000]
         
         if len(answer) > 3900:
-            await interaction.followup.send(f"🦙 **Llama 3.1 8B:**\n{answer[:3900]}\n...")
+            await interaction.followup.send(f"🦙 **GPT-OSS 20B:**\n{answer[:3900]}\n...")
         else:
-            await interaction.followup.send(f"🦙 **Llama 3.1 8B:**\n{answer}")
+            await interaction.followup.send(f"🦙 **GPT-OSS 20B:**\n{answer}")
             
     except Exception as e:
         error_msg = str(e)[:200]
@@ -139,4 +147,4 @@ async def lamaask(interaction: discord.Interaction, question: str):
 if __name__ == "__main__":
     print("🚀 Запуск Discord бота с поддержкой Gemini и Llama...")
     bot.run(DISCORD_TOKEN)
-        
+            
