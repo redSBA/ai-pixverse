@@ -41,7 +41,7 @@ async def on_ready():
     
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.listening,
-        name="/geminiask /chatgptoss20b /llama4scout /chatgptoss120b"
+        name="/geminiask /chatgptoss20b /qwen3627b /chatgptoss120b"
     ))
 
 # ✅ Slash команда /geminiask
@@ -199,11 +199,11 @@ async def chatgptoss120b(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /llama4scout
-@bot.tree.command(name="llama4scout", description="Спроси Llama 4 Scout 17B")
+# ✅ Slash команда /qwen3627b
+@bot.tree.command(name="qwen3627b", description="Спроси Qwen 3.6 27B")
 @app_commands.describe(question="Твой вопрос")
-async def llama4scout(interaction: discord.Interaction, question: str):
-    """Спроси Llama 4 Scout 17B через Groq"""
+async def qwen3627b(interaction: discord.Interaction, question: str):
+    """Спроси Qwen 3.6 27B через Groq (замена Llama 4 Scout)"""
     
     if not question.strip():
         await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
@@ -212,16 +212,16 @@ async def llama4scout(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
     try:
-        # ✅ Llama 4 Scout через Groq (специализированная модель)
+        # ✅ Qwen 3.6 27B через Groq (замена Llama 4 Scout)
         groq_client = get_groq_client()
         if not groq_client:
             await interaction.followup.send(
-                "❌ Llama 4 Scout недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
+                "❌ Qwen 3.6 27B недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
                 "Добавь его в Railway → Variables"
             )
             return
         
-        # Llama 4 Scout 17B - оптимизирована для reasoning
+        # Qwen 3.6 27B - мощная модель (замена для Llama 4 Scout)
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {
@@ -229,7 +229,7 @@ async def llama4scout(interaction: discord.Interaction, question: str):
                     "content": question,
                 }
             ],
-            model="meta-llama/llama-4-scout-17b-16e-instruct",  # Llama 4 Scout
+            model="qwen/qwen3.6-27b",  # Qwen 3.6 27B (Llama 4 Scout закрыта)
             max_tokens=2048,
             temperature=0.7,
         )
@@ -237,9 +237,9 @@ async def llama4scout(interaction: discord.Interaction, question: str):
         answer = chat_completion.choices[0].message.content[:4000]
         
         if len(answer) > 3900:
-            await interaction.followup.send(f"🦅 **Llama 4 Scout 17B:**\n{answer[:3900]}\n...")
+            await interaction.followup.send(f"🦅 **Qwen 3.6 27B:**\n{answer[:3900]}\n...")
         else:
-            await interaction.followup.send(f"🦅 **Llama 4 Scout 17B:**\n{answer}")
+            await interaction.followup.send(f"🦅 **Qwen 3.6 27B:**\n{answer}")
             
     except Exception as e:
         error_msg = str(e)[:200]
