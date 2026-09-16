@@ -41,7 +41,7 @@ async def on_ready():
     
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.listening,
-        name="/geminiask /lamaask /mixtralask"
+        name="/geminiask /chatGPToss20b /llama4ask /chatGPToss120bask"
     ))
 
 # ✅ Slash команда /geminiask
@@ -87,10 +87,10 @@ async def geminiask(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /lamaask
-@bot.tree.command(name="lamaask", description="Спроси GPT-OSS 20B (Llama улучшенная)")
+# ✅ Slash команда /chatGPToss20b
+@bot.tree.command(name="chatGPToss20b", description="Спроси GPT-OSS 20B")
 @app_commands.describe(question="Твой вопрос")
-async def lamaask(interaction: discord.Interaction, question: str):
+async def chatGPToss20b(interaction: discord.Interaction, question: str):
     """Спроси GPT-OSS 20B через Groq"""
     
     if not question.strip():
@@ -143,10 +143,10 @@ async def lamaask(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /mixtralask
-@bot.tree.command(name="mixtralask", description="Спроси GPT-OSS 120B (Мощный)")
+# ✅ Slash команда /chatGPToss120bask
+@bot.tree.command(name="chatGPToss120bask", description="Спроси GPT-OSS 120B (Мощный)")
 @app_commands.describe(question="Твой вопрос")
-async def mixtralask(interaction: discord.Interaction, question: str):
+async def chatGPToss120bask(interaction: discord.Interaction, question: str):
     """Спроси GPT-OSS 120B через Groq (мощная модель)"""
     
     if not question.strip():
@@ -199,6 +199,62 @@ async def mixtralask(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
+# ✅ Slash команда /llama4ask
+@bot.tree.command(name="llama4ask", description="Спроси Llama 4 Scout 17B")
+@app_commands.describe(question="Твой вопрос")
+async def llama4ask(interaction: discord.Interaction, question: str):
+    """Спроси Llama 4 Scout 17B через Groq"""
+    
+    if not question.strip():
+        await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
+        return
+    
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        # ✅ Llama 4 Scout через Groq (специализированная модель)
+        groq_client = get_groq_client()
+        if not groq_client:
+            await interaction.followup.send(
+                "❌ Llama 4 Scout недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
+                "Добавь его в Railway → Variables"
+            )
+            return
+        
+        # Llama 4 Scout 17B - оптимизирована для reasoning
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": question,
+                }
+            ],
+            model="meta-llama/llama-4-scout-17b-16e-instruct",  # Llama 4 Scout
+            max_tokens=2048,
+            temperature=0.7,
+        )
+        
+        answer = chat_completion.choices[0].message.content[:4000]
+        
+        if len(answer) > 3900:
+            await interaction.followup.send(f"🦅 **Llama 4 Scout 17B:**\n{answer[:3900]}\n...")
+        else:
+            await interaction.followup.send(f"🦅 **Llama 4 Scout 17B:**\n{answer}")
+            
+    except Exception as e:
+        error_msg = str(e)[:200]
+        
+        if "429" in error_msg or "rate" in error_msg.lower():
+            await interaction.followup.send(
+                "⏱️ Слишком много запросов Groq! Подожди немного."
+            )
+        elif "403" in error_msg or "permission" in error_msg.lower():
+            await interaction.followup.send(
+                "❌ Ошибка доступа Groq! Проверь GROQ_API_KEY."
+            )
+        else:
+            await interaction.followup.send(f"❌ Ошибка: {error_msg}")
+
 # Запуск бота
 if __name__ == "__main__":
     print("🚀 Запуск Discord бота с тремя AI моделями...")
@@ -207,4 +263,4 @@ if __name__ == "__main__":
     print("  🦙 /lamaask - GPT-OSS 20B")
     print("  🎯 /mixtralask - Mixtral 8x7B")
     bot.run(DISCORD_TOKEN)
-    
+            
