@@ -41,7 +41,7 @@ async def on_ready():
     
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.listening,
-        name="/lamaask и /geminiask"
+        name="/geminiask /lamaask /mixtralask"
     ))
 
 # ✅ Slash команда /geminiask
@@ -143,8 +143,64 @@ async def lamaask(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
+# ✅ Slash команда /mixtralask
+@bot.tree.command(name="mixtralask", description="Спроси Mixtral 8x7B (MoE)")
+@app_commands.describe(question="Твой вопрос")
+async def mixtralask(interaction: discord.Interaction, question: str):
+    """Спроси Mixtral 8x7B через Groq"""
+    
+    if not question.strip():
+        await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
+        return
+    
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        # ✅ Mixtral через Groq (MoE архитектура, мощный)
+        groq_client = get_groq_client()
+        if not groq_client:
+            await interaction.followup.send(
+                "❌ Mixtral недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
+                "Добавь его в Railway → Variables"
+            )
+            return
+        
+        # Mixtral 8x7B MoE модель
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": question,
+                }
+            ],
+            model="mixtral-8x7b-32768",  # Полная версия Mixtral с 32K контекстом
+            max_tokens=2048,
+            temperature=0.7,
+        )
+        
+        answer = chat_completion.choices[0].message.content[:4000]
+        
+        if len(answer) > 3900:
+            await interaction.followup.send(f"🎯 **Mixtral 8x7B:**\n{answer[:3900]}\n...")
+        else:
+            await interaction.followup.send(f"🎯 **Mixtral 8x7B:**\n{answer}")
+            
+    except Exception as e:
+        error_msg = str(e)[:200]
+        
+        if "429" in error_msg or "rate" in error_msg.lower():
+            await interaction.followup.send(
+                "⏱️ Слишком много запросов Groq! Подожди немного."
+            )
+        elif "403" in error_msg or "permission" in error_msg.lower():
+            await interaction.followup.send(
+                "❌ Ошибка доступа Groq! Проверь GROQ_API_KEY."
+            )
+        else:
+            await interaction.followup.send(f"❌ Ошибка: {error_msg}")
+
 # Запуск бота
 if __name__ == "__main__":
     print("🚀 Запуск Discord бота с поддержкой Gemini и Llama...")
     bot.run(DISCORD_TOKEN)
-            
+        
