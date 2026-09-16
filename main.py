@@ -41,7 +41,7 @@ async def on_ready():
     
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.listening,
-        name="/geminiask /chatGPToss20b /llama4ask /chatGPToss120bask"
+        name="/geminiask /chatgptoss20b /llama4scout /chatgptoss120b"
     ))
 
 # ✅ Slash команда /geminiask
@@ -87,10 +87,10 @@ async def geminiask(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /chatGPToss20b
-@bot.tree.command(name="chatGPToss20b", description="Спроси GPT-OSS 20B")
+# ✅ Slash команда /chatgptoss20b
+@bot.tree.command(name="chatgptoss20b", description="Спроси GPT-OSS 20B")
 @app_commands.describe(question="Твой вопрос")
-async def chatGPToss20b(interaction: discord.Interaction, question: str):
+async def chatgptoss20b(interaction: discord.Interaction, question: str):
     """Спроси GPT-OSS 20B через Groq"""
     
     if not question.strip():
@@ -143,10 +143,10 @@ async def chatGPToss20b(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /chatGPToss120bask
-@bot.tree.command(name="chatGPToss120bask", description="Спроси GPT-OSS 120B (Мощный)")
+# ✅ Slash команда /chatgptoss120b
+@bot.tree.command(name="chatgptoss120b", description="Спроси GPT-OSS 120B (Мощный)")
 @app_commands.describe(question="Твой вопрос")
-async def chatGPToss120bask(interaction: discord.Interaction, question: str):
+async def chatgptoss120b(interaction: discord.Interaction, question: str):
     """Спроси GPT-OSS 120B через Groq (мощная модель)"""
     
     if not question.strip():
@@ -199,10 +199,10 @@ async def chatGPToss120bask(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /llama4ask
-@bot.tree.command(name="llama4ask", description="Спроси Llama 4 Scout 17B")
+# ✅ Slash команда /llama4scout
+@bot.tree.command(name="llama4scout", description="Спроси Llama 4 Scout 17B")
 @app_commands.describe(question="Твой вопрос")
-async def llama4ask(interaction: discord.Interaction, question: str):
+async def llama4scout(interaction: discord.Interaction, question: str):
     """Спроси Llama 4 Scout 17B через Groq"""
     
     if not question.strip():
@@ -263,4 +263,4 @@ if __name__ == "__main__":
     print("  🦙 /lamaask - GPT-OSS 20B")
     print("  🎯 /mixtralask - Mixtral 8x7B")
     bot.run(DISCORD_TOKEN)
-            
+        
