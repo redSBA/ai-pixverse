@@ -6,6 +6,7 @@ from google import genai
 from groq import Groq
 import base64
 import httpx
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -91,33 +92,6 @@ async def status_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="markdown"
     )
 
-async def update_telegram_status(context: ContextTypes.DEFAULT_TYPE):
-    """Периодически обновлять статус в Telegram (каждую минуту)"""
-    if not TELEGA_CHAT_ID:
-        return
-    
-    try:
-        status_text = "📊 **СТАТУС AI МОДЕЛЕЙ**\n\n"
-        
-        for model_name, usage in token_usage.items():
-            model_display = model_name.replace("_", " ").title()
-            used = usage["used"]
-            total = usage["total"]
-            percentage = (used / total * 100) if total > 0 else 0
-            
-            status_text += f"🔷 {model_display}\n"
-            status_text += f"   {used:,} / {total:,} токенов ({percentage:.1f}%)\n\n"
-        
-        status_text += f"🔄 Обновлено: {os.popen('date').read().strip()}"
-        
-        await context.bot.send_message(
-            chat_id=TELEGA_CHAT_ID,
-            text=status_text,
-            parse_mode="markdown"
-        )
-    except Exception as e:
-        print(f"❌ Ошибка отправки статуса в Telegram: {e}")
-
 # ✅ Запуск Telegram бота
 async def start_telegram_bot():
     """Инициализация Telegram бота"""
@@ -130,18 +104,43 @@ async def start_telegram_bot():
     telegram_app.add_handler(CommandHandler("start", start_telegram))
     telegram_app.add_handler(CallbackQueryHandler(status_button, pattern="status"))
     
-    # Добавляем задачу для обновления статуса каждую минуту
-    telegram_app.job_queue.run_repeating(
-        update_telegram_status,
-        interval=60,
-        first=0
-    )
-    
     await telegram_app.initialize()
     await telegram_app.start()
+    
+    # Запуск фонового обновления статуса
+    asyncio.create_task(telegram_status_updater(telegram_app))
+    
     print("✅ Telegram бот запущен!")
     
     return telegram_app
+
+async def telegram_status_updater(app):
+    """Периодически обновлять статус в Telegram (каждую минуту)"""
+    while True:
+        await asyncio.sleep(60)  # Обновляем каждую минуту
+        
+        if not TELEGA_CHAT_ID:
+            continue
+        
+        try:
+            status_text = "📊 **СТАТУС AI МОДЕЛЕЙ**\n\n"
+            
+            for model_name, usage in token_usage.items():
+                model_display = model_name.replace("_", " ").title()
+                used = usage["used"]
+                total = usage["total"]
+                percentage = (used / total * 100) if total > 0 else 0
+                
+                status_text += f"🔷 {model_display}\n"
+                status_text += f"   {used:,} / {total:,} токенов ({percentage:.1f}%)\n\n"
+            
+            await app.bot.send_message(
+                chat_id=TELEGA_CHAT_ID,
+                text=status_text,
+                parse_mode="markdown"
+            )
+        except Exception as e:
+            print(f"⚠️ Ошибка обновления статуса Telegram: {e}")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -435,4 +434,3 @@ if __name__ == "__main__":
                 await telegram_app.stop()
     
     asyncio.run(main())
-            
