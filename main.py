@@ -456,7 +456,7 @@ async def redsba(interaction: discord.Interaction, question: str):
         
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                "https://api.kilo.ai/api/gateway/v1/chat/completions",
+                "https://api.kilo.ai/api/gateway/chat/completions",
                 headers=headers,
                 json=payload
             )
