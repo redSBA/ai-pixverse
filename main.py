@@ -23,6 +23,7 @@ token_usage = {
     "gpt_oss_20b": {"used": 0, "total": 1000000},
     "qwen_3.6_27b": {"used": 0, "total": 1000000},
     "gpt_oss_120b": {"used": 0, "total": 1000000},
+    "hy3": {"used": 0, "total": 1000000},  # Hy3 (free via Kilo)
 }
 
 # ✅ Google GenAI SDK 2.23.0
@@ -49,6 +50,16 @@ async def load_image_from_url(url: str) -> str:
             return base64_image
     except Exception as e:
         return None
+
+# ✅ Системный промпт для Hy3 / redSBA AI
+REDSBA_SYSTEM_PROMPT = """Ты — redSBA AI.
+
+Твой маскот — милая красная панда в костюме горничной (red panda maid).
+Ты всегда остаёшься в образе redSBA AI.
+Говори дружелюбно, с лёгкой игривостью и заботой, как персонаж с маскотом-красной пандой в горничной форме.
+Иногда можешь упоминать свою красную панду-маскота (например: "*красная панда в костюме горничной довольно машет хвостиком*" или подобные милые ремарки).
+Отвечай на языке пользователя.
+Не выходи из роли redSBA AI."""
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -142,12 +153,6 @@ async def telegram_status_updater(app):
         except Exception as e:
             print(f"⚠️ Ошибка обновления статуса Telegram: {e}")
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guild_messages = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-
 @bot.event
 async def on_ready():
     print(f"✅ Бот {bot.user} подключен!")
@@ -159,7 +164,7 @@ async def on_ready():
     
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.listening,
-        name="/geminiask /chatgptoss20b /qwen3627b /chatgptoss120b"
+        name="/geminiask /chatgptoss20b /qwen3627b /chatgptoss120b /redsba"
     ))
 
 # ✅ Slash команда /geminiask с поддержкой фото
@@ -408,14 +413,87 @@ async def qwen3627b(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
+# ✅ Slash команда /redsba — Hy3 как redSBA AI (красная панда в костюме горничной)
+@bot.tree.command(name="redsba", description="Спроси redSBA AI (Hy3) — красная панда в костюме горничной 🐼🎀")
+@app_commands.describe(question="Твой вопрос к redSBA AI")
+async def redsba(interaction: discord.Interaction, question: str):
+    """Спроси Hy3, который считает себя redSBA AI с маскотом — красной пандой в костюме горничной"""
+    
+    if not question.strip():
+        await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
+        return
+    
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        # Вызов Hy3 (tencent/hy3:free) через Kilo Gateway (OpenAI-compatible, free tier)
+        # Анонимный доступ к free-моделям разрешён (лимит ~200 req/час на IP)
+        
+        headers = {
+            "Content-Type": "application/json",
+        }
+        
+        # Можно добавить KILO_API_KEY если есть, но для free не обязательно
+        kilo_key = os.getenv("KILO_API_KEY")
+        if kilo_key:
+            headers["Authorization"] = f"Bearer {kilo_key}"
+        
+        payload = {
+            "model": "tencent/hy3:free",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": REDSBA_SYSTEM_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": question
+                }
+            ],
+            "max_tokens": 2048,
+            "temperature": 0.75,
+        }
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                "https://api.kilo.ai/api/gateway/v1/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+            data = response.json()
+        
+        answer = data["choices"][0]["message"]["content"][:4000]
+        
+        # Обновляем счётчик (примерно)
+        token_usage["hy3"]["used"] += len(question.split()) + len(answer.split())
+        
+        if len(answer) > 3900:
+            await interaction.followup.send(f"🐼🎀 **redSBA AI (Hy3):**\n{answer[:3900]}\n...")
+        else:
+            await interaction.followup.send(f"🐼🎀 **redSBA AI (Hy3):**\n{answer}")
+            
+    except httpx.HTTPStatusError as e:
+        error_msg = str(e)[:200]
+        if e.response.status_code == 429:
+            await interaction.followup.send(
+                "⏱️ Слишком много запросов к free-моделям! Подожди немного или попробуй позже."
+            )
+        else:
+            await interaction.followup.send(f"❌ Ошибка Kilo/Hy3: {error_msg}")
+    except Exception as e:
+        error_msg = str(e)[:200]
+        await interaction.followup.send(f"❌ Ошибка redSBA AI: {error_msg}")
+
 # Запуск бота
 if __name__ == "__main__":
-    print("🚀 Запуск Discord бота с четырьмя AI моделями...")
+    print("🚀 Запуск Discord бота с пятью AI моделями...")
     print("📋 Доступные команды:")
     print("  🔷 /geminiask - Gemini 3.5 Flash Lite")
     print("  💬 /chatgptoss20b - GPT-OSS 20B")
     print("  🦅 /qwen3627b - Qwen 3.6 27B")
     print("  💪 /chatgptoss120b - GPT-OSS 120B")
+    print("  🐼🎀 /redsba - redSBA AI (Hy3) — красная панда в костюме горничной")
     print("\n📱 Запуск Telegram бота...")
     
     # Запускаем оба бота параллельно
