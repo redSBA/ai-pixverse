@@ -1,16 +1,28 @@
 import os
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from google import genai
 from groq import Groq
 import base64
 import httpx
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+TELEGA_API = os.getenv("TELEGA_API")  # Telegram Bot API Token
+TELEGA_CHAT_ID = os.getenv("TELEGA_CHAT_ID")  # Chat ID для отправки статуса
 
 if not DISCORD_TOKEN:
     raise ValueError("DISCORD_TOKEN не установлен!")
+
+# ✅ Счётчики токенов для каждой модели
+token_usage = {
+    "gemini_3.5_flash_lite": {"used": 0, "total": 1000000},
+    "gpt_oss_20b": {"used": 0, "total": 1000000},
+    "qwen_3.6_27b": {"used": 0, "total": 1000000},
+    "gpt_oss_120b": {"used": 0, "total": 1000000},
+}
 
 # ✅ Google GenAI SDK 2.23.0
 client_genai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -36,6 +48,100 @@ async def load_image_from_url(url: str) -> str:
             return base64_image
     except Exception as e:
         return None
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guild_messages = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# ✅ Функции для Telegram
+async def start_telegram(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Стартовое сообщение Telegram бота"""
+    keyboard = [
+        [InlineKeyboardButton("📊 Смотреть статус", callback_data="status")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "👋 Привет! Нажми кнопку чтобы посмотреть статус ИИ!",
+        reply_markup=reply_markup
+    )
+
+async def status_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать статус ИИ моделей"""
+    query = update.callback_query
+    await query.answer()
+    
+    status_text = "📊 **СТАТУС AI МОДЕЛЕЙ:**\n\n"
+    
+    for model_name, usage in token_usage.items():
+        model_display = model_name.replace("_", " ").title()
+        used = usage["used"]
+        total = usage["total"]
+        percentage = (used / total * 100) if total > 0 else 0
+        
+        status_text += f"🔷 {model_display}\n"
+        status_text += f"   {used:,} / {total:,} токенов ({percentage:.1f}%)\n\n"
+    
+    status_text += "🔄 Обновляется каждую минуту"
+    
+    await query.edit_message_text(
+        text=status_text,
+        parse_mode="markdown"
+    )
+
+async def update_telegram_status(context: ContextTypes.DEFAULT_TYPE):
+    """Периодически обновлять статус в Telegram (каждую минуту)"""
+    if not TELEGA_CHAT_ID:
+        return
+    
+    try:
+        status_text = "📊 **СТАТУС AI МОДЕЛЕЙ**\n\n"
+        
+        for model_name, usage in token_usage.items():
+            model_display = model_name.replace("_", " ").title()
+            used = usage["used"]
+            total = usage["total"]
+            percentage = (used / total * 100) if total > 0 else 0
+            
+            status_text += f"🔷 {model_display}\n"
+            status_text += f"   {used:,} / {total:,} токенов ({percentage:.1f}%)\n\n"
+        
+        status_text += f"🔄 Обновлено: {os.popen('date').read().strip()}"
+        
+        await context.bot.send_message(
+            chat_id=TELEGA_CHAT_ID,
+            text=status_text,
+            parse_mode="markdown"
+        )
+    except Exception as e:
+        print(f"❌ Ошибка отправки статуса в Telegram: {e}")
+
+# ✅ Запуск Telegram бота
+async def start_telegram_bot():
+    """Инициализация Telegram бота"""
+    if not TELEGA_API:
+        print("⚠️ TELEGA_API не установлен, Telegram бот отключен")
+        return None
+    
+    telegram_app = Application.builder().token(TELEGA_API).build()
+    
+    telegram_app.add_handler(CommandHandler("start", start_telegram))
+    telegram_app.add_handler(CallbackQueryHandler(status_button, pattern="status"))
+    
+    # Добавляем задачу для обновления статуса каждую минуту
+    telegram_app.job_queue.run_repeating(
+        update_telegram_status,
+        interval=60,
+        first=0
+    )
+    
+    await telegram_app.initialize()
+    await telegram_app.start()
+    print("✅ Telegram бот запущен!")
+    
+    return telegram_app
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -305,10 +411,28 @@ async def qwen3627b(interaction: discord.Interaction, question: str):
 
 # Запуск бота
 if __name__ == "__main__":
-    print("🚀 Запуск Discord бота с тремя AI моделями...")
+    print("🚀 Запуск Discord бота с четырьмя AI моделями...")
     print("📋 Доступные команды:")
     print("  🔷 /geminiask - Gemini 3.5 Flash Lite")
-    print("  🦙 /lamaask - GPT-OSS 20B")
-    print("  🎯 /mixtralask - Mixtral 8x7B")
-    bot.run(DISCORD_TOKEN)
+    print("  💬 /chatgptoss20b - GPT-OSS 20B")
+    print("  🦅 /qwen3627b - Qwen 3.6 27B")
+    print("  💪 /chatgptoss120b - GPT-OSS 120B")
+    print("\n📱 Запуск Telegram бота...")
+    
+    # Запускаем оба бота параллельно
+    import asyncio
+    
+    async def main():
+        # Запуск Telegram бота в отдельной задаче
+        telegram_app = await start_telegram_bot()
         
+        # Запуск Discord бота (блокирующий вызов)
+        try:
+            await bot.start(DISCORD_TOKEN)
+        except KeyboardInterrupt:
+            print("\n🛑 Отключение ботов...")
+            if telegram_app:
+                await telegram_app.stop()
+    
+    asyncio.run(main())
+            
