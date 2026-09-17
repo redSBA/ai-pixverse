@@ -23,7 +23,7 @@ token_usage = {
     "gpt_oss_20b": {"used": 0, "total": 1000000},
     "qwen_3.6_27b": {"used": 0, "total": 1000000},
     "gpt_oss_120b": {"used": 0, "total": 1000000},
-    "hy3": {"used": 0, "total": 1000000},  # Hy3 (free via Kilo)
+    "hy3": {"used": 0, "total": 1000000},  # Nemotron Ultra (free) (free via Kilo)
 }
 
 # ✅ Google GenAI SDK 2.23.0
@@ -51,7 +51,7 @@ async def load_image_from_url(url: str) -> str:
     except Exception as e:
         return None
 
-# ✅ Системный промпт для Hy3 / redSBA AI
+# ✅ Системный промпт для Nemotron Ultra (free) / redSBA AI
 REDSBA_SYSTEM_PROMPT = """Ты — redSBA AI.
 
 Твой маскот — милая красная панда в костюме горничной (red panda maid).
@@ -413,11 +413,11 @@ async def qwen3627b(interaction: discord.Interaction, question: str):
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /redsba — Hy3 как redSBA AI (красная панда в костюме горничной)
-@bot.tree.command(name="redsba", description="Спроси redSBA AI (Hy3) — красная панда в костюме горничной 🐼🎀")
+# ✅ Slash команда /redsba — Nemotron Ultra (free) как redSBA AI (красная панда в костюме горничной)
+@bot.tree.command(name="redsba", description="Спроси redSBA AI — красная панда в костюме горничной 🐼🎀")
 @app_commands.describe(question="Твой вопрос к redSBA AI")
 async def redsba(interaction: discord.Interaction, question: str):
-    """Спроси Hy3, который считает себя redSBA AI с маскотом — красной пандой в костюме горничной"""
+    """Спроси Nemotron Ultra (free), который считает себя redSBA AI с маскотом — красной пандой в костюме горничной"""
     
     if not question.strip():
         await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
@@ -426,20 +426,19 @@ async def redsba(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
     try:
-        # Вызов Hy3 (tencent/hy3:free) через Kilo Gateway (OpenAI-compatible, free tier)
+        # Вызов Nemotron 3 Ultra (free) через Kilo Gateway через Kilo Gateway (OpenAI-compatible, free tier)
         # Анонимный доступ к free-моделям разрешён (лимит ~200 req/час на IP)
         
         headers = {
             "Content-Type": "application/json",
         }
         
-        # Можно добавить KILO_API_KEY если есть, но для free не обязательно
-        kilo_key = os.getenv("KILO_API_KEY")
-        if kilo_key:
-            headers["Authorization"] = f"Bearer {kilo_key}"
+        # Для free-моделей можно "anonymous", лучше свой KILO_API_KEY
+        kilo_key = os.getenv("KILO_API_KEY") or "anonymous"
+        headers["Authorization"] = f"Bearer {kilo_key}"
         
         payload = {
-            "model": "tencent/hy3:free",
+            "model": "nvidia/nemotron-3-ultra-550b-a55b:free",  # сильная free-модель
             "messages": [
                 {
                     "role": "system",
@@ -469,9 +468,9 @@ async def redsba(interaction: discord.Interaction, question: str):
         token_usage["hy3"]["used"] += len(question.split()) + len(answer.split())
         
         if len(answer) > 3900:
-            await interaction.followup.send(f"🐼🎀 **redSBA AI (Hy3):**\n{answer[:3900]}\n...")
+            await interaction.followup.send(f"🐼🎀 **redSBA AI:**\n{answer[:3900]}\n...")
         else:
-            await interaction.followup.send(f"🐼🎀 **redSBA AI (Hy3):**\n{answer}")
+            await interaction.followup.send(f"🐼🎀 **redSBA AI:**\n{answer}")
             
     except httpx.HTTPStatusError as e:
         error_msg = str(e)[:200]
@@ -480,7 +479,7 @@ async def redsba(interaction: discord.Interaction, question: str):
                 "⏱️ Слишком много запросов к free-моделям! Подожди немного или попробуй позже."
             )
         else:
-            await interaction.followup.send(f"❌ Ошибка Kilo/Hy3: {error_msg}")
+            await interaction.followup.send(f"❌ Ошибка Kilo/Nemotron Ultra (free): {error_msg}")
     except Exception as e:
         error_msg = str(e)[:200]
         await interaction.followup.send(f"❌ Ошибка redSBA AI: {error_msg}")
@@ -493,7 +492,7 @@ if __name__ == "__main__":
     print("  💬 /chatgptoss20b - GPT-OSS 20B")
     print("  🦅 /qwen3627b - Qwen 3.6 27B")
     print("  💪 /chatgptoss120b - GPT-OSS 120B")
-    print("  🐼🎀 /redsba - redSBA AI (Hy3) — красная панда в костюме горничной")
+    print("  🐼🎀 /redsba - redSBA AI — красная панда в костюме горничной")
     print("\n📱 Запуск Telegram бота...")
     
     # Запускаем оба бота параллельно
