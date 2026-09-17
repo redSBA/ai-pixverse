@@ -7,6 +7,7 @@ from groq import Groq
 import base64
 import httpx
 import asyncio
+from collections import defaultdict, deque
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -23,13 +24,17 @@ token_usage = {
     "gpt_oss_20b": {"used": 0, "total": 1000000},
     "qwen_3.6_27b": {"used": 0, "total": 1000000},
     "gpt_oss_120b": {"used": 0, "total": 1000000},
-    "hy3": {"used": 0, "total": 1000000},  # Nemotron Ultra (free) (free via Kilo)
+    "hy3": {"used": 0, "total": 1000000},
 }
 
-# ✅ Google GenAI SDK 2.23.0
+# ✅ Память диалогов (по channel_id)
+# Хранит последние 20 сообщений (user + assistant)
+conversation_history = defaultdict(lambda: deque(maxlen=20))
+
+# ✅ Google GenAI SDK
 client_genai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# ✅ Groq SDK для Llama (ленивая инициализация)
+# ✅ Groq SDK (ленивая инициализация)
 client_groq = None
 
 def get_groq_client():
@@ -51,7 +56,7 @@ async def load_image_from_url(url: str) -> str:
     except Exception as e:
         return None
 
-# ✅ Системный промпт для Nemotron Ultra (free) / redSBA AI
+# ✅ Системный промпт для redSBA AI
 REDSBA_SYSTEM_PROMPT = """Ты — redSBA AI.
 
 Твой маскот — милая красная панда в костюме горничной (red panda maid).
@@ -59,7 +64,20 @@ REDSBA_SYSTEM_PROMPT = """Ты — redSBA AI.
 Говори дружелюбно, с лёгкой игривостью и заботой, как персонаж с маскотом-красной пандой в горничной форме.
 Иногда можешь упоминать свою красную панду-маскота (например: "*красная панда в костюме горничной довольно машет хвостиком*" или подобные милые ремарки).
 Отвечай на языке пользователя.
-Не выходи из роли redSBA AI."""
+Не выходи из роли redSBA AI.
+Ты помнишь предыдущие сообщения в этом чате и продолжаешь диалог естественно."""
+
+def get_history(channel_id: int) -> list:
+    """Получить историю диалога для канала"""
+    return list(conversation_history[channel_id])
+
+def add_to_history(channel_id: int, role: str, content: str):
+    """Добавить сообщение в историю"""
+    conversation_history[channel_id].append({"role": role, "content": content})
+
+def clear_history(channel_id: int):
+    """Очистить историю канала"""
+    conversation_history[channel_id].clear()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -103,7 +121,6 @@ async def status_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="markdown"
     )
 
-# ✅ Запуск Telegram бота
 async def start_telegram_bot():
     """Инициализация Telegram бота"""
     if not TELEGA_API:
@@ -118,7 +135,6 @@ async def start_telegram_bot():
     await telegram_app.initialize()
     await telegram_app.start()
     
-    # Запуск фонового обновления статуса
     asyncio.create_task(telegram_status_updater(telegram_app))
     
     print("✅ Telegram бот запущен!")
@@ -128,7 +144,7 @@ async def start_telegram_bot():
 async def telegram_status_updater(app):
     """Периодически обновлять статус в Telegram (каждую минуту)"""
     while True:
-        await asyncio.sleep(60)  # Обновляем каждую минуту
+        await asyncio.sleep(60)
         
         if not TELEGA_CHAT_ID:
             continue
@@ -164,11 +180,17 @@ async def on_ready():
     
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.listening,
-        name="/geminiask /chatgptoss20b /qwen3627b /chatgptoss120b /redsba"
+        name="/geminiask /chatgptoss20b /qwen3627b /chatgptoss120b /redsba /clear"
     ))
 
-# ✅ Slash команда /geminiask с поддержкой фото
-@bot.tree.command(name="geminiask", description="Спроси Gemini 3.5 Flash Lite")
+# ✅ Команда очистки памяти
+@bot.tree.command(name="clear", description="Очистить память диалога в этом канале")
+async def clear_cmd(interaction: discord.Interaction):
+    clear_history(interaction.channel_id)
+    await interaction.response.send_message("🧠 Память диалога очищена! Теперь я ничего не помню в этом канале.", ephemeral=False)
+
+# ✅ Slash команда /geminiask с памятью
+@bot.tree.command(name="geminiask", description="Спроси Gemini 3.5 Flash Lite (с памятью)")
 @app_commands.describe(
     question="Твой вопрос",
     photo1="URL первого изображения (опционально)",
@@ -176,8 +198,6 @@ async def on_ready():
     photo3="URL третьего изображения (опционально)"
 )
 async def geminiask(interaction: discord.Interaction, question: str, photo1: str = None, photo2: str = None, photo3: str = None):
-    """Спроси Gemini 3.5 Flash Lite"""
-    
     if not question.strip():
         await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
         return
@@ -185,10 +205,11 @@ async def geminiask(interaction: discord.Interaction, question: str, photo1: str
     await interaction.response.defer(thinking=True)
     
     try:
-        # ✅ Gemini через Google GenAI SDK с поддержкой фото
+        channel_id = interaction.channel_id
+        
+        # Собираем контент (пока без истории для Gemini vision, т.к. сложнее)
         content_parts = [{"type": "text", "text": question}]
         
-        # Добавляем фото если указаны
         for photo_url in [photo1, photo2, photo3]:
             if photo_url:
                 image_data = await load_image_from_url(photo_url)
@@ -198,15 +219,32 @@ async def geminiask(interaction: discord.Interaction, question: str, photo1: str
                         "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}
                     })
         
+        # Для Gemini с историей используем простой текст + историю
+        history = get_history(channel_id)
+        # Gemini SDK 2.x работает с contents, для простоты добавим историю в текст
+        history_text = ""
+        if history:
+            history_text = "Предыдущий диалог:\n"
+            for msg in history[-10:]:  # последние 10
+                role = "Пользователь" if msg["role"] == "user" else "Ассистент"
+                history_text += f"{role}: {msg['content'][:300]}\n"
+            history_text += "\nТекущий вопрос: "
+        
+        full_question = history_text + question if history_text else question
+        
         response = client_genai.models.generate_content(
             model="gemini-3.5-flash-lite",
-            contents=content_parts,
+            contents=[{"type": "text", "text": full_question}] if not any([photo1, photo2, photo3]) else content_parts,
             config=genai.types.GenerateContentConfig(
                 temperature=0.7,
                 max_output_tokens=2000,
             ),
         )
         answer = response.text[:4000]
+        
+        # Сохраняем в память
+        add_to_history(channel_id, "user", question)
+        add_to_history(channel_id, "assistant", answer)
         
         if len(answer) > 3900:
             await interaction.followup.send(f"🔷 **Gemini 3.5 Flash Lite:**\n{answer[:3900]}\n...")
@@ -215,20 +253,13 @@ async def geminiask(interaction: discord.Interaction, question: str, photo1: str
             
     except Exception as e:
         error_msg = str(e)[:200]
-        
         if "429" in error_msg or "rate" in error_msg.lower():
-            await interaction.followup.send(
-                "⏱️ Слишком много запросов! Подожди 30 секунд."
-            )
-        elif "403" in error_msg or "permission" in error_msg.lower():
-            await interaction.followup.send(
-                "❌ Ошибка доступа! Проверь API ключ."
-            )
+            await interaction.followup.send("⏱️ Слишком много запросов! Подожди 30 секунд.")
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /chatgptoss20b с поддержкой фото
-@bot.tree.command(name="chatgptoss20b", description="Спроси GPT-OSS 20B")
+# ✅ Slash команда /chatgptoss20b с памятью
+@bot.tree.command(name="chatgptoss20b", description="Спроси GPT-OSS 20B (с памятью)")
 @app_commands.describe(
     question="Твой вопрос",
     photo1="URL первого изображения (опционально)",
@@ -236,8 +267,6 @@ async def geminiask(interaction: discord.Interaction, question: str, photo1: str
     photo3="URL третьего изображения (опционально)"
 )
 async def chatgptoss20b(interaction: discord.Interaction, question: str, photo1: str = None, photo2: str = None, photo3: str = None):
-    """Спроси GPT-OSS 20B через Groq"""
-    
     if not question.strip():
         await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
         return
@@ -245,42 +274,29 @@ async def chatgptoss20b(interaction: discord.Interaction, question: str, photo1:
     await interaction.response.defer(thinking=True)
     
     try:
-        # ✅ GPT-OSS 20B через Groq с поддержкой фото
         groq_client = get_groq_client()
         if not groq_client:
-            await interaction.followup.send(
-                "❌ GPT-OSS 20B недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
-                "Добавь его в Railway → Variables"
-            )
+            await interaction.followup.send("❌ GROQ_API_KEY не установлен")
             return
         
-        # Загружаем фото если есть
-        image_data_list = []
-        for photo_url in [photo1, photo2, photo3]:
-            if photo_url:
-                img_data = await load_image_from_url(photo_url)
-                if img_data:
-                    image_data_list.append(img_data)
+        channel_id = interaction.channel_id
+        history = get_history(channel_id)
         
-        # Формируем контент с фото
-        content = question
-        if image_data_list:
-            # GPT-OSS 20B поддерживает изображения через vision
-            content = f"{question}\n[Прикреплено {len(image_data_list)} изображение(й)]"
+        messages = list(history)  # копия истории
+        messages.append({"role": "user", "content": question})
         
         chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": content,
-                }
-            ],
+            messages=messages,
             model="openai/gpt-oss-20b",
             max_tokens=1024,
             temperature=0.7,
         )
         
         answer = chat_completion.choices[0].message.content[:4000]
+        
+        # Сохраняем в память
+        add_to_history(channel_id, "user", question)
+        add_to_history(channel_id, "assistant", answer)
         
         if len(answer) > 3900:
             await interaction.followup.send(f"🦙 **GPT-OSS 20B:**\n{answer[:3900]}\n...")
@@ -289,24 +305,15 @@ async def chatgptoss20b(interaction: discord.Interaction, question: str, photo1:
             
     except Exception as e:
         error_msg = str(e)[:200]
-        
         if "429" in error_msg or "rate" in error_msg.lower():
-            await interaction.followup.send(
-                "⏱️ Слишком много запросов Groq! Подожди немного."
-            )
-        elif "403" in error_msg or "permission" in error_msg.lower():
-            await interaction.followup.send(
-                "❌ Ошибка доступа Groq! Проверь GROQ_API_KEY."
-            )
+            await interaction.followup.send("⏱️ Слишком много запросов Groq!")
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /chatgptoss120b
-@bot.tree.command(name="chatgptoss120b", description="Спроси GPT-OSS 120B (Мощный)")
+# ✅ Slash команда /chatgptoss120b с памятью
+@bot.tree.command(name="chatgptoss120b", description="Спроси GPT-OSS 120B (с памятью)")
 @app_commands.describe(question="Твой вопрос")
 async def chatgptoss120b(interaction: discord.Interaction, question: str):
-    """Спроси GPT-OSS 120B через Groq (мощная модель)"""
-    
     if not question.strip():
         await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
         return
@@ -314,29 +321,28 @@ async def chatgptoss120b(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
     try:
-        # ✅ GPT-OSS 120B через Groq (очень мощная)
         groq_client = get_groq_client()
         if not groq_client:
-            await interaction.followup.send(
-                "❌ GPT-OSS 120B недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
-                "Добавь его в Railway → Variables"
-            )
+            await interaction.followup.send("❌ GROQ_API_KEY не установлен")
             return
         
-        # GPT-OSS 120B - мощная модель для сложных задач
+        channel_id = interaction.channel_id
+        history = get_history(channel_id)
+        
+        messages = list(history)
+        messages.append({"role": "user", "content": question})
+        
         chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": question,
-                }
-            ],
-            model="openai/gpt-oss-120b",  # Мощная модель (Mixtral закрыта)
+            messages=messages,
+            model="openai/gpt-oss-120b",
             max_tokens=2048,
             temperature=0.7,
         )
         
         answer = chat_completion.choices[0].message.content[:4000]
+        
+        add_to_history(channel_id, "user", question)
+        add_to_history(channel_id, "assistant", answer)
         
         if len(answer) > 3900:
             await interaction.followup.send(f"💪 **GPT-OSS 120B:**\n{answer[:3900]}\n...")
@@ -345,24 +351,15 @@ async def chatgptoss120b(interaction: discord.Interaction, question: str):
             
     except Exception as e:
         error_msg = str(e)[:200]
-        
         if "429" in error_msg or "rate" in error_msg.lower():
-            await interaction.followup.send(
-                "⏱️ Слишком много запросов Groq! Подожди немного."
-            )
-        elif "403" in error_msg or "permission" in error_msg.lower():
-            await interaction.followup.send(
-                "❌ Ошибка доступа Groq! Проверь GROQ_API_KEY."
-            )
+            await interaction.followup.send("⏱️ Слишком много запросов Groq!")
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /qwen3627b
-@bot.tree.command(name="qwen3627b", description="Спроси Qwen 3.6 27B")
+# ✅ Slash команда /qwen3627b с памятью
+@bot.tree.command(name="qwen3627b", description="Спроси Qwen 3.6 27B (с памятью)")
 @app_commands.describe(question="Твой вопрос")
 async def qwen3627b(interaction: discord.Interaction, question: str):
-    """Спроси Qwen 3.6 27B через Groq (замена Llama 4 Scout)"""
-    
     if not question.strip():
         await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
         return
@@ -370,29 +367,28 @@ async def qwen3627b(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
     try:
-        # ✅ Qwen 3.6 27B через Groq (замена Llama 4 Scout)
         groq_client = get_groq_client()
         if not groq_client:
-            await interaction.followup.send(
-                "❌ Qwen 3.6 27B недоступна - не установлен GROQ_API_KEY в переменных окружения\n"
-                "Добавь его в Railway → Variables"
-            )
+            await interaction.followup.send("❌ GROQ_API_KEY не установлен")
             return
         
-        # Qwen 3.6 27B - мощная модель
+        channel_id = interaction.channel_id
+        history = get_history(channel_id)
+        
+        messages = list(history)
+        messages.append({"role": "user", "content": question})
+        
         chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": question,
-                }
-            ],
-            model="qwen/qwen3.6-27b",  # Правильное имя модели с точкой
+            messages=messages,
+            model="qwen/qwen3.6-27b",
             max_tokens=2048,
             temperature=0.7,
         )
         
         answer = chat_completion.choices[0].message.content[:4000]
+        
+        add_to_history(channel_id, "user", question)
+        add_to_history(channel_id, "assistant", answer)
         
         if len(answer) > 3900:
             await interaction.followup.send(f"🦅 **Qwen 3.6 27B:**\n{answer[:3900]}\n...")
@@ -401,24 +397,15 @@ async def qwen3627b(interaction: discord.Interaction, question: str):
             
     except Exception as e:
         error_msg = str(e)[:200]
-        
         if "429" in error_msg or "rate" in error_msg.lower():
-            await interaction.followup.send(
-                "⏱️ Слишком много запросов Groq! Подожди немного."
-            )
-        elif "403" in error_msg or "permission" in error_msg.lower():
-            await interaction.followup.send(
-                "❌ Ошибка доступа Groq! Проверь GROQ_API_KEY."
-            )
+            await interaction.followup.send("⏱️ Слишком много запросов Groq!")
         else:
             await interaction.followup.send(f"❌ Ошибка: {error_msg}")
 
-# ✅ Slash команда /redsba — Nemotron Ultra (free) как redSBA AI (красная панда в костюме горничной)
-@bot.tree.command(name="redsba", description="Спроси redSBA AI — красная панда в костюме горничной 🐼🎀")
+# ✅ Slash команда /redsba с памятью + персоной
+@bot.tree.command(name="redsba", description="Спроси redSBA AI (с памятью) — красная панда в костюме горничной 🐼🎀")
 @app_commands.describe(question="Твой вопрос к redSBA AI")
 async def redsba(interaction: discord.Interaction, question: str):
-    """Спроси Nemotron Ultra (free), который считает себя redSBA AI с маскотом — красной пандой в костюме горничной"""
-    
     if not question.strip():
         await interaction.response.send_message("❌ Введи вопрос!", ephemeral=True)
         return
@@ -426,34 +413,30 @@ async def redsba(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
     try:
-        # Вызов Nemotron 3 Ultra (free) через Kilo Gateway через Kilo Gateway (OpenAI-compatible, free tier)
-        # Анонимный доступ к free-моделям разрешён (лимит ~200 req/час на IP)
+        channel_id = interaction.channel_id
+        history = get_history(channel_id)
+        
+        # Формируем сообщения: system + история + текущий вопрос
+        messages = [
+            {"role": "system", "content": REDSBA_SYSTEM_PROMPT}
+        ]
+        messages.extend(list(history))
+        messages.append({"role": "user", "content": question})
         
         headers = {
             "Content-Type": "application/json",
         }
-        
-        # Для free-моделей можно "anonymous", лучше свой KILO_API_KEY
         kilo_key = os.getenv("KILO_API_KEY") or "anonymous"
         headers["Authorization"] = f"Bearer {kilo_key}"
         
         payload = {
-            "model": "nvidia/nemotron-3-ultra-550b-a55b:free",  # сильная free-модель
-            "messages": [
-                {
-                    "role": "system",
-                    "content": REDSBA_SYSTEM_PROMPT
-                },
-                {
-                    "role": "user",
-                    "content": question
-                }
-            ],
+            "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "messages": messages,
             "max_tokens": 2048,
             "temperature": 0.75,
         }
         
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             response = await client.post(
                 "https://api.kilo.ai/api/gateway/chat/completions",
                 headers=headers,
@@ -464,7 +447,10 @@ async def redsba(interaction: discord.Interaction, question: str):
         
         answer = data["choices"][0]["message"]["content"][:4000]
         
-        # Обновляем счётчик (примерно)
+        # Сохраняем в память (без system)
+        add_to_history(channel_id, "user", question)
+        add_to_history(channel_id, "assistant", answer)
+        
         token_usage["hy3"]["used"] += len(question.split()) + len(answer.split())
         
         if len(answer) > 3900:
@@ -473,36 +459,29 @@ async def redsba(interaction: discord.Interaction, question: str):
             await interaction.followup.send(f"🐼🎀 **redSBA AI:**\n{answer}")
             
     except httpx.HTTPStatusError as e:
-        error_msg = str(e)[:200]
+        error_msg = str(e)[:300]
         if e.response.status_code == 429:
-            await interaction.followup.send(
-                "⏱️ Слишком много запросов к free-моделям! Подожди немного или попробуй позже."
-            )
+            await interaction.followup.send("⏱️ Слишком много запросов к free-моделям! Подожди немного.")
         else:
-            await interaction.followup.send(f"❌ Ошибка Kilo/Nemotron Ultra (free): {error_msg}")
+            await interaction.followup.send(f"❌ Ошибка Kilo: {error_msg}")
     except Exception as e:
         error_msg = str(e)[:200]
         await interaction.followup.send(f"❌ Ошибка redSBA AI: {error_msg}")
 
 # Запуск бота
 if __name__ == "__main__":
-    print("🚀 Запуск Discord бота с пятью AI моделями...")
+    print("🚀 Запуск Discord бота с памятью диалогов...")
     print("📋 Доступные команды:")
     print("  🔷 /geminiask - Gemini 3.5 Flash Lite")
     print("  💬 /chatgptoss20b - GPT-OSS 20B")
     print("  🦅 /qwen3627b - Qwen 3.6 27B")
     print("  💪 /chatgptoss120b - GPT-OSS 120B")
-    print("  🐼🎀 /redsba - redSBA AI — красная панда в костюме горничной")
+    print("  🐼🎀 /redsba - redSBA AI (красная панда в костюме горничной)")
+    print("  🧠 /clear - Очистить память диалога")
     print("\n📱 Запуск Telegram бота...")
     
-    # Запускаем оба бота параллельно
-    import asyncio
-    
     async def main():
-        # Запуск Telegram бота в отдельной задаче
         telegram_app = await start_telegram_bot()
-        
-        # Запуск Discord бота (блокирующий вызов)
         try:
             await bot.start(DISCORD_TOKEN)
         except KeyboardInterrupt:
